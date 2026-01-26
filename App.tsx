@@ -53,7 +53,10 @@ const App: React.FC = () => {
             <i className="fas fa-robot text-lg"></i>
           </div>
           <div>
-            <h1 className="text-base font-bold text-slate-900 leading-tight tracking-tight">AI 培训助手</h1>
+            <h1 className="text-base font-bold text-slate-900 leading-tight tracking-tight flex flex-wrap items-baseline gap-x-2">
+              <span>AI 培训助手</span>
+              <span className="text-[10px] text-slate-400 font-normal whitespace-nowrap scale-90 origin-left transform">(from 知识星球：AI时代的HR)</span>
+            </h1>
             <p className="text-xs text-slate-500 font-medium mt-0.5">HR 效能提升专家</p>
           </div>
         </header>
