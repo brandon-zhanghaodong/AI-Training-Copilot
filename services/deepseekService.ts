@@ -1,13 +1,17 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import OpenAI from "openai";
 import { FeedbackAnalysis, QuizItem } from "../types";
 
-// Initialize Gemini Client
+// Initialize DeepSeek Client (OpenAI-compatible)
 const getClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
     throw new Error("API Key is missing.");
   }
-  return new GoogleGenAI({ apiKey });
+  return new OpenAI({
+    apiKey,
+    baseURL: "https://api.deepseek.com/v1",
+    dangerouslyAllowBrowser: true, // Required for browser-side usage
+  });
 };
 
 // --- Course Gen (Streaming) ---
@@ -18,7 +22,7 @@ export const streamCourseOutline = async (
   style: string,
   onChunk: (text: string) => void
 ) => {
-  const ai = getClient();
+  const client = getClient();
   const prompt = `
     Role: Professional Corporate Training Specialist.
     Task: Create a structured training course outline in Simplified Chinese.
@@ -44,14 +48,16 @@ export const streamCourseOutline = async (
   `;
 
   try {
-    const response = await ai.models.generateContentStream({
-      model: "gemini-3-flash-preview",
-      contents: [{ parts: [{ text: prompt }] }],
+    const stream = await client.chat.completions.create({
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: prompt }],
+      stream: true,
     });
 
-    for await (const chunk of response) {
-      if (chunk.text) {
-        onChunk(chunk.text);
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        onChunk(content);
       }
     }
   } catch (error) {
@@ -66,41 +72,35 @@ export const generateQuiz = async (
   count: number,
   difficulty: string
 ): Promise<QuizItem[]> => {
-  const ai = getClient();
+  const client = getClient();
   
-  const schema: Schema = {
-    type: Type.ARRAY,
-    items: {
-      type: Type.OBJECT,
-      properties: {
-        question: { type: Type.STRING, description: "Question text in Simplified Chinese" },
-        type: { type: Type.STRING, enum: ['单选题', '判断题', '多选题'] },
-        optionA: { type: Type.STRING },
-        optionB: { type: Type.STRING },
-        optionC: { type: Type.STRING },
-        optionD: { type: Type.STRING },
-        answer: { type: Type.STRING, description: "The correct option (e.g., A, B, C, or True/False translated)" },
-        explanation: { type: Type.STRING, description: "Explanation in Simplified Chinese" },
-      },
-      required: ['question', 'type', 'answer', 'explanation'],
-    },
-  };
-
-  const parts: any[] = [];
+  const messages: any[] = [];
   
   if (inputData.base64 && inputData.mimeType) {
-    parts.push({
-      inlineData: {
-        data: inputData.base64,
-        mimeType: inputData.mimeType
-      }
+    // DeepSeek supports vision with base64 images
+    messages.push({
+      role: "user",
+      content: [
+        {
+          type: "image_url",
+          image_url: {
+            url: `data:${inputData.mimeType};base64,${inputData.base64}`
+          }
+        },
+        {
+          type: "text",
+          text: `Generate ${count} training quiz questions based on this document.`
+        }
+      ]
     });
-    parts.push({ text: `Generate ${count} training quiz questions based on this document.` });
   } else if (inputData.text) {
-    parts.push({ text: `Generate ${count} training quiz questions based on this content: ${inputData.text.substring(0, 15000)}` });
+    messages.push({
+      role: "user",
+      content: `Generate ${count} training quiz questions based on this content: ${inputData.text.substring(0, 15000)}`
+    });
   }
 
-  const prompt = `
+  const systemPrompt = `
     Role: Expert Exam Question Creator.
     Language: Simplified Chinese (简体中文).
     Difficulty: ${difficulty}.
@@ -109,22 +109,36 @@ export const generateQuiz = async (
     - Mix of Single Choice (单选题) and True/False (判断题).
     - For True/False, Option A should be "正确", Option B should be "错误".
     - Provide clear explanations.
+    
+    Output Format: JSON array with the following structure:
+    [
+      {
+        "question": "Question text in Simplified Chinese",
+        "type": "单选题 or 判断题 or 多选题",
+        "optionA": "Option A text",
+        "optionB": "Option B text",
+        "optionC": "Option C text (optional)",
+        "optionD": "Option D text (optional)",
+        "answer": "The correct option (e.g., A, B, C, D)",
+        "explanation": "Explanation in Simplified Chinese"
+      }
+    ]
   `;
   
-  parts.push({ text: prompt });
+  messages.unshift({ role: "system", content: systemPrompt });
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [{ parts: parts }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: schema,
-      },
+    const response = await client.chat.completions.create({
+      model: "deepseek-chat",
+      messages: messages,
+      response_format: { type: "json_object" },
     });
 
-    if (response.text) {
-      return JSON.parse(response.text) as QuizItem[];
+    const content = response.choices[0]?.message?.content;
+    if (content) {
+      const parsed = JSON.parse(content);
+      // Handle both array and object with array property
+      return Array.isArray(parsed) ? parsed : (parsed.questions || parsed.data || []);
     }
     return [];
   } catch (error) {
@@ -135,33 +149,7 @@ export const generateQuiz = async (
 
 // --- Feedback Analysis ---
 export const analyzeFeedback = async (feedbackText: string): Promise<FeedbackAnalysis> => {
-  const ai = getClient();
-
-  const schema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-      sentiment: {
-        type: Type.OBJECT,
-        properties: {
-          positive: { type: Type.INTEGER, description: "Percentage 0-100" },
-          neutral: { type: Type.INTEGER, description: "Percentage 0-100" },
-          negative: { type: Type.INTEGER, description: "Percentage 0-100" },
-        },
-        required: ["positive", "neutral", "negative"],
-      },
-      keywords: {
-        type: Type.ARRAY,
-        items: { type: Type.STRING },
-        description: "Top 5 recurring keywords or phrases in Chinese",
-      },
-      suggestions: {
-        type: Type.ARRAY,
-        items: { type: Type.STRING },
-        description: "Top 3 actionable improvements in Chinese",
-      },
-    },
-    required: ["sentiment", "keywords", "suggestions"],
-  };
+  const client = getClient();
 
   const prompt = `
     Role: HR Data Analyst.
@@ -170,20 +158,29 @@ export const analyzeFeedback = async (feedbackText: string): Promise<FeedbackAna
     Feedback Data: "${feedbackText.substring(0, 10000)}"
     
     Goal: Determine sentiment distribution, extract keywords, and provide 3 key improvement suggestions.
+    
+    Output Format: JSON object with the following structure:
+    {
+      "sentiment": {
+        "positive": <integer 0-100>,
+        "neutral": <integer 0-100>,
+        "negative": <integer 0-100>
+      },
+      "keywords": ["keyword1", "keyword2", ...],  // Top 5 recurring keywords or phrases in Chinese
+      "suggestions": ["suggestion1", "suggestion2", "suggestion3"]  // Top 3 actionable improvements in Chinese
+    }
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: schema,
-      },
+    const response = await client.chat.completions.create({
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
     });
 
-    if (response.text) {
-      return JSON.parse(response.text) as FeedbackAnalysis;
+    const content = response.choices[0]?.message?.content;
+    if (content) {
+      return JSON.parse(content) as FeedbackAnalysis;
     }
     throw new Error("No data returned");
   } catch (error) {
@@ -194,7 +191,7 @@ export const analyzeFeedback = async (feedbackText: string): Promise<FeedbackAna
 
 // --- Survey Generation (New) ---
 export const generateSurvey = async (topic: string, type: string): Promise<string> => {
-  const ai = getClient();
+  const client = getClient();
   const prompt = `
     Role: Professional Survey Designer.
     Task: Design a training survey questionnaire for Tencent Questionnaire (腾讯问卷).
@@ -214,11 +211,11 @@ export const generateSurvey = async (topic: string, type: string): Promise<strin
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [{ parts: [{ text: prompt }] }],
+    const response = await client.chat.completions.create({
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: prompt }],
     });
-    return response.text || "";
+    return response.choices[0]?.message?.content || "";
   } catch (error) {
     console.error("Survey Gen Error:", error);
     throw error;
@@ -232,7 +229,7 @@ export const streamOpsCopy = async (
   tone: string,
   onChunk: (text: string) => void
 ) => {
-  const ai = getClient();
+  const client = getClient();
   const prompt = `
     Role: Internal Comms Specialist.
     Task: Write a ${type} for a training program.
@@ -244,14 +241,16 @@ export const streamOpsCopy = async (
   `;
 
   try {
-    const response = await ai.models.generateContentStream({
-      model: "gemini-3-flash-preview",
-      contents: [{ parts: [{ text: prompt }] }],
+    const stream = await client.chat.completions.create({
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: prompt }],
+      stream: true,
     });
 
-    for await (const chunk of response) {
-      if (chunk.text) {
-        onChunk(chunk.text);
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        onChunk(content);
       }
     }
   } catch (error) {

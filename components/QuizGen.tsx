@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { generateQuiz } from '../services/geminiService';
+import { generateQuiz } from '../services/deepseekService';
 import { QuizItem } from '../types';
 
 const QuizGen: React.FC = () => {

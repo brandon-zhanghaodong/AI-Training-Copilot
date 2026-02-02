@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { streamCourseOutline } from '../services/geminiService';
+import { streamCourseOutline } from '../services/deepseekService';
 import { CourseParams } from '../types';
 
 const CourseGen: React.FC = () => {

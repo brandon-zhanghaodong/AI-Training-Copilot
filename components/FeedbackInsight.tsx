@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { analyzeFeedback, generateSurvey } from '../services/geminiService';
+import { analyzeFeedback, generateSurvey } from '../services/deepseekService';
 import { FeedbackAnalysis } from '../types';
 
 enum Mode {

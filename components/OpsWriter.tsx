@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { streamOpsCopy } from '../services/geminiService';
+import { streamOpsCopy } from '../services/deepseekService';
 
 const OpsWriter: React.FC = () => {
   const [type, setType] = useState('开课通知邮件');
